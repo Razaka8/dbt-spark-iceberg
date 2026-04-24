@@ -1,0 +1,7 @@
+pyspark==3.5.3
+grpcio-status
+thrift-sasl
+thrift
+dbt-core
+dbt-spark[PyHive]
+googleapis-common-protos
