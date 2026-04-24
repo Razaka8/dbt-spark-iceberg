@@ -1,0 +1,6 @@
+com.amazonaws_aws-java-sdk-bundle-1.12.262.jar
+iceberg-aws-bundle-1.8.0.jar
+org.apache.hadoop_hadoop-aws-3.3.4.jar
+org.apache.iceberg_iceberg-spark-runtime-3.5_2.12-1.8.0.jar
+org.postgresql_postgresql-42.6.0.jar
+gravitino-iceberg-aws-bundle-1.2.0.jar

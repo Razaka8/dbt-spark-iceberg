@@ -1,0 +1,175 @@
+services:
+# ==========================================================================
+  # Services  ICEBERG : Iceberg REST Gravitino, MinIO, PostgreSQL
+  # ==========================================================================
+  iceberg-rest:
+    image: apache/gravitino-iceberg-rest
+    container_name: iceberg-rest
+    ports:
+      - "8181:9001"
+      - "8090:8090"
+    entrypoint: >
+      /bin/sh -c "
+      cp /home/extra_jars/*.jar /root/gravitino-iceberg-rest-server/libs/ &&
+      exec /root/gravitino-iceberg-rest-server/bin/start-iceberg-rest-server.sh
+      "    
+    environment:
+      # Backend JDBC  Postgresql
+      - GRAVITINO_CATALOG_BACKEND=jdbc
+      - GRAVITINO_JDBC_DRIVER=org.postgresql.Driver
+      - GRAVITINO_URI=jdbc:postgresql://postgres_rest_iceberg:5432/mydb_rest_iceberg_db
+      - GRAVITINO_JDBC_USER=user1
+      - GRAVITINO_JDBC_PASSWORD=a
+
+      # MinIO (données)
+      - GRAVITINO_CREDENTIAL_PROVIDERS=s3-secret-key
+      - GRAVITINO_WAREHOUSE=s3://dbt-bucket/iceberg_warehouse/
+      - GRAVITINO_IO_IMPL=org.apache.iceberg.aws.s3.S3FileIO
+      # On change warehouse-minio par l'IP et le nom du container 
+      # si on veut que DuckDb puisse se connecté à Iceberg via gravitino-IRC
+      - GRAVITINO_S3_ENDPOINT=http://192.168.70.2:9000
+      - GRAVITINO_S3_ACCESS_KEY=minioadmin
+      - GRAVITINO_S3_SECRET_KEY=minioadmin
+      - GRAVITINO_S3_PATH_STYLE_ACCESS=true
+      - GRAVITINO_S3_REGION=us-east-1
+
+      # Variables d'environnement AWS pour S3
+      - AWS_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+      - AWS_DEFAULT_REGION=us-east-1
+    volumes:
+      - ./les_jars:/home/extra_jars
+    networks:
+      - dbt-network
+    depends_on:
+      backend-psql:
+        condition: service_healthy
+
+
+  backend-psql:
+    container_name: postgres_rest_iceberg
+    image: postgres:17.2-bookworm
+    environment:
+      POSTGRES_USER: user1
+      POSTGRES_PASSWORD: a
+      POSTGRES_DB: mydb_rest_iceberg_db
+    volumes:
+      - dbt_iceberg_metastore_data:/var/lib/postgresql/data
+    
+    networks:
+      - dbt-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user1 -d mydb_rest_iceberg_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  minio:
+    container_name: warehouse-minio
+    image: minio/minio:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001" # Console port
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address :9001
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - dbt_iceberg_warehouse:/data
+    networks:
+      - dbt-network
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://warehouse-minio:9000 minioadmin minioadmin;
+      mc mb local/dbt-bucket/iceberg_warehouse;
+      "
+    networks:
+      - dbt-network
+      
+  # ==========================================================================
+  # Service  HiveThriftServer2
+  # ==========================================================================
+  spark-thrift-dbt:
+    image: jupyter/pyspark-notebook:x86_64-lab-4.0.7
+    container_name: spark-thrift-dbt
+    user: root
+    entrypoint: []
+    ports:
+      - "10000:10000"
+      - "4040:4040"
+    command: >
+      /usr/local/spark/bin/spark-submit
+        --class org.apache.spark.sql.hive.thriftserver.HiveThriftServer2 \
+        --name Thrift JDBC/ODBC Server \
+        --hiveconf hive.server2.thrift.port=10000 \
+        --hiveconf hive.server2.thrift.bind.host=0.0.0.0
+    volumes:
+      - ./config/spark_irc_gravitino/spark-defaults.conf:/usr/local/spark/conf/spark-defaults.conf
+      - ./les_jars:/home/jovyan/.ivy2/jars
+    environment:
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+      - AWS_REGION=us-east-1
+      - HIVE_SERVER2_THRIFT_BIND_HOST=spark-thrift-dbt
+    networks:
+      - dbt-network
+
+# ============================================================================
+#  Services Spark connect
+# ============================================================================
+  spark-connect:
+    image: jupyter/pyspark-notebook:x86_64-lab-4.0.7
+    container_name: spark-connect
+    hostname: spark-connect
+    user: root
+    entrypoint: []
+    environment:
+      - AWS_REGION=us-east-1    
+    command:
+      - bash
+      - -c
+      - >
+        /usr/local/spark/sbin/start-connect-server.sh
+        --master local[*]
+        --conf spark.driver.host=spark-connect
+        --conf spark.driver.extraJavaOptions="-Divy.cache.dir=/tmp -Divy.home=/tmp"
+        --packages org.apache.spark:spark-connect_2.12:3.5.0
+        && tail -f /dev/null
+    ports:
+      - "15002:15002"   # gRPC Spark Connect
+      - "4041:4040"     # Spark UI
+    volumes:
+      - ./config/spark_irc_gravitino/spark-defaults.conf:/usr/local/spark/conf/spark-defaults.conf
+      - ./les_jars:/home/jovyan/.ivy2/jars
+    networks:
+      - dbt-network
+
+# ============================================================================
+# VOLUMES
+# ============================================================================
+volumes:
+  dbt_iceberg_metastore_data:
+  dbt_iceberg_warehouse:
+
+
+# ============================================================================
+# NETWORKS
+# ============================================================================
+
+networks:
+  dbt-network:
+
+
