@@ -43,20 +43,6 @@ ce qui n'est **pas** possible avec AWS GlueCatalog + OSS Spark.
 
 ---
 
-## Pourquoi Gravitino IRC ?
-
-| Catalog | `CREATE TABLE` | `CREATE VIEW` | Backend | Multi-moteurs |
-|---|---|---|---|---|
-| AWS GlueCatalog + OSS Spark | ✅ | ❌ | Glue managed | ✅ |
-| JDBC PostgreSQL direct | ✅ | ✅ | PostgreSQL | ⚠️ risqué |
-| **Gravitino IRC** | ✅ | ✅ | PostgreSQL / Hive | ✅ |
-
-> Gravitino 1.2.0 (mars 2026) introduit le support complet des Iceberg views
-> avec autorisation fine au niveau view.  
-> → [Release notes](https://gravitino.apache.org/blog/gravitino-1-2-0-release-notes/)
-
----
-
 ## Stack technique
 
 | Service Docker | Image | Port hôte | Rôle |
