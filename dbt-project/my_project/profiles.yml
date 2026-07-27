@@ -1,0 +1,30 @@
+my_project:
+  outputs:
+    dev:
+      host: 192.168.70.2
+      method: thrift
+      port: 10000
+      schema: dev
+      threads: 1
+      type: spark
+      user: spark_user # obligatoire pour dbt-fusion
+    
+    ci:
+      host: 192.168.70.2
+      method: thrift
+      port: 10000
+      schema: ci 
+      threads: 1
+      type: spark
+      user: spark_user  
+
+    prod:
+      host: 192.168.70.2
+      method: thrift
+      port: 10000
+      schema: prod 
+      threads: 1
+      type: spark
+      user: spark_user
+    
+  target: dev

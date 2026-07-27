@@ -1,0 +1,84 @@
+# .github/workflows/ci.yml
+name: ci dbt
+
+on:
+  pull_request:
+    branches: [ "main" ]
+    
+    paths:
+      - "dbt-project/my_project/models/**"
+      - "dbt-project/my_project/macros/**"
+      - "dbt-project/my_project/seeds/**"
+      - "dbt-project/my_project/tests/**"
+      - "dbt-project/my_project/snapshots/**"
+      - "dbt-project/my_project/packages.yml"
+      - ".github/workflows/ci.yml"
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:  
+     
+env:
+  DBT_PROFILES_DIR: ${{ github.workspace }}/dbt-project/my_project
+  DBT_PROJECT_DIR: ${{ github.workspace }}/dbt-project/my_project
+
+
+jobs:
+  #-------linting-----------
+  linting:
+    runs-on: self-hosted
+    defaults:
+      run:
+        working-directory: ./dbt-project/my_project
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: activation de venv python
+        run: echo "$HOME/Ketrika Data/virt/bin" >> $GITHUB_PATH
+      
+      - name: dbt debug
+        run:  dbt debug
+
+      - name: dbt deps
+        run: dbt deps 
+
+      - name: dbt parse
+        run: dbt parse
+
+  #-------integration--------
+
+  integration:
+    runs-on: self-hosted
+    
+    needs: linting
+
+    defaults:
+      run:
+        working-directory: ./dbt-project/my_project
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: activation de l'venv python
+        run: echo "$HOME/Ketrika Data/virt/bin" >> $GITHUB_PATH
+      
+      - name: dbt debug
+        run: dbt debug
+
+      - name: dbt deps
+        run:  dbt deps
+
+      - name: download prod artifacts manifest.json from minio
+        run: |
+          $HOME/aistor-binaries/mc cp my_minio/dbt-bucket/dbt-artifacts/manifest.json \
+          ./artifacts-prod/manifest.json 
+
+      - name: dbt build
+        run: |
+          dbt build \
+            --target ci \
+           --select state:modified+ \
+           --defer \
+           --state ./artifacts-prod

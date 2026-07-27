@@ -1,0 +1,64 @@
+# .github/workflows/cd.yml
+
+name: cd dbt
+
+on:
+  push:
+    branches: [ "main" ]
+
+    paths:
+      - "dbt-project/my_project/models/**"
+      - "dbt-project/my_project/macros/**"
+      - "dbt-project/my_project/seeds/**"
+      - "dbt-project/my_project/tests/**"
+      - "dbt-project/my_project/snapshots/**"
+      - "dbt-project/my_project/packages.yml"
+      - ".github/workflows/cd.yml"
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:  
+     
+env:
+  DBT_PROFILES_DIR: ${{ github.workspace }}/dbt-project/my_project
+  DBT_PROJECT_DIR: ${{ github.workspace }}/dbt-project/my_project
+
+
+jobs:
+
+  #-------deployment--------
+
+  deployment:
+    runs-on: self-hosted
+    defaults:
+      run:
+        working-directory: ./dbt-project/my_project
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: activation de venv python
+        run: echo "$HOME/Ketrika Data/virt/bin" >> $GITHUB_PATH
+      
+
+      - name: dbt deps
+        run: dbt deps
+        
+      - name: download prod artifacts manifest.json from minio
+        run: |
+          $HOME/aistor-binaries/mc cp my_minio/dbt-bucket/dbt-artifacts/manifest.json \
+          ./artifacts-prod/manifest.json 
+        
+      - name: dbt build
+        run: |
+          dbt build \
+            --target prod \
+            --target-path ./target-prod \
+           --select state:modified+ \
+           --defer \
+           --state ./artifacts-prod
+
+      - name: upload prod artifacts manifest.json to minio
+        run: |
+          $HOME/aistor-binaries/mc cp ./target-prod/manifest.json \
+          my_minio/dbt-bucket/dbt-artifacts/manifest.json
