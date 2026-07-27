@@ -80,13 +80,16 @@ git clone https://github.com/Razaka8/dbt-spark-iceberg.git
 cd dbt-spark-iceberg
 
 # 2. Démarrer l'infrastructure
-docker compose up -d
+./spark-iceberg-infra/scripts/01-init-infra.sh
 
 # 3. Vérifier que Gravitino IRC répond
 curl http://192.168.70.2:8181/iceberg/v1/config
 
 # 4. Vérifier que le Thrift Server est prêt
 docker logs spark-thrift-dbt 2>&1 | grep -E "ThriftBinaryCLIService|ERROR"
+
+# 5. Creation du namespace default
+./spark-iceberg-infra/scripts/02-init-default-namespace.sh
 
 ```
 
@@ -154,16 +157,37 @@ spark.sql.parquet.compression.codec           snappy
 ## profiles.yml (dbt)
 
 ```yaml
-dbt_spark_iceberg:
-  target: dev
+my_project:
   outputs:
     dev:
-      type:          spark
-      method:        thrift
-      host:          192.168.70.2
-      port:          10000
-      schema:        analytics
-      threads:      1
+      host: 192.168.70.2
+      method: thrift
+      port: 10000
+      schema: dev
+      threads: 1
+      type: spark
+      user: spark_user # obligatoire pour dbt-fusion
+    
+    ci:
+      host: 192.168.70.2
+      method: thrift
+      port: 10000
+      schema: ci 
+      threads: 1
+      type: spark
+      user: spark_user  
+
+    prod:
+      host: 192.168.70.2
+      method: thrift
+      port: 10000
+      schema: prod 
+      threads: 1
+      type: spark
+      user: spark_user
+    
+  target: dev
+
 ```
 
 ---
@@ -173,9 +197,9 @@ dbt_spark_iceberg:
 ```bash
 
 # Installer dbt et les autres packages utiles
-> pip install -r requirements.txt
+> pip install -r ./dbt-project/requirements.txt
 
-> cd dbt-project
+> cd ./dbt-project/my_project
 
 > dbt debug
 14:24:24  Running with dbt=1.11.7
@@ -183,9 +207,9 @@ dbt_spark_iceberg:
 14:24:24  python version: 3.10.2
 14:24:24  python path: .dbt_env\Scripts\python.exe
 14:24:24  os info: Windows-10-10.0.26100-SP0
-14:24:33  Using profiles dir at dbt-spark-iceberg\dbt-project\spark_iceberg
-14:24:33  Using profiles.yml file at dbt-spark-iceberg\dbt-project\spark_iceberg\profiles.yml
-14:24:33  Using dbt_project.yml file at dbt-spark-iceberg\dbt-project\spark_iceberg\dbt_project.yml
+14:24:33  Using profiles dir at dbt-spark-iceberg\dbt-project\my_project
+14:24:33  Using profiles.yml file at dbt-spark-iceberg\dbt-project\my_project\profiles.yml
+14:24:33  Using dbt_project.yml file at dbt-spark-iceberg\dbt-project\my_project\dbt_project.yml
 14:24:33  adapter type: spark
 14:24:33  adapter version: 1.10.1
 14:24:33  Configuration:
@@ -199,7 +223,7 @@ dbt_spark_iceberg:
 14:24:34    port: 10000
 14:24:34    cluster: None
 14:24:34    endpoint: None
-14:24:34    schema: analytics
+14:24:34    schema: dev
 14:24:34    organization: 0
 14:24:34  Registered adapter: spark=1.10.1
 14:25:13    Connection test: [OK connection ok]
@@ -215,10 +239,10 @@ dbt_spark_iceberg:
 14:25:57
 14:25:57  Concurrency: 1 threads (target='dev')
 14:25:57
-14:26:27  1 of 2 START sql table model analytics.my_first_dbt_model ...................... [RUN]
-14:27:12  1 of 2 OK created sql table model analytics.my_first_dbt_model ................. [OK in 44.80s]
-14:27:12  2 of 2 START sql view model analytics.my_second_dbt_model ...................... [RUN]
-14:27:23  2 of 2 OK created sql view model analytics.my_second_dbt_model ................. [OK in 10.78s]
+14:26:27  1 of 2 START sql table model dev.my_first_dbt_model ...................... [RUN]
+14:27:12  1 of 2 OK created sql table model dev.my_first_dbt_model ................. [OK in 44.80s]
+14:27:12  2 of 2 START sql view model dev.my_second_dbt_model ...................... [RUN]
+14:27:23  2 of 2 OK created sql view model dev.my_second_dbt_model ................. [OK in 10.78s]
 14:27:24
 14:27:24  Finished running 1 table model, 1 view model in 0 hours 1 minutes and 27.10 seconds (87.10s).
 14:27:24
@@ -238,31 +262,31 @@ Résultat :
 +------------------+
 |namespace         |
 +------------------+
-|analytics         |
+|dev               |
 |default           |
 +------------------+
 ```
 ```bash
-> ./scripts/03-beeline.sh "show tables in analytics"
+> ./scripts/03-beeline.sh "show tables in dev"
 ```
 Résultat :
 ```
 +---------+------------------+-----------+
 |namespace|tableName         |isTemporary|
 +---------+------------------+-----------+
-|analytics|my_first_dbt_model|false      |
+|dev      |my_first_dbt_model|false      |
 +---------+------------------+-----------+
 ```
 
 ```bash
-> ./scripts/03-beeline.sh "show views in analytics"
+> ./scripts/03-beeline.sh "show views in dev"
 ```
 Résultat :
 ```
 +---------+-------------------+-----------+
 |namespace|viewName           |isTemporary|
 +---------+-------------------+-----------+
-|analytics|my_second_dbt_model|false      |
+|dev      |my_second_dbt_model|false      |
 +---------+-------------------+-----------+
 ```
 
@@ -298,18 +322,100 @@ pour les déploiements on-premise.
 
 ---
 
+## CI/CD — GitHub Actions
+
+Le pipeline CI/CD repose sur un **self-hosted runner** installé sur la même machine que Spark.
+
+### Vue d'ensemble
+
+```
+PR ouverte              Merge dans main     
+     │                        │            
+     ▼                        ▼                 
+  ci.yml                   cd.yml             
+  ───────                  ──────           
+  linting                  slim CD           
+  slim CI                  state:modified+    
+  state:modified+          upload manifest    
+```
+
+### `ci.yml` — Pull Request
+
+Déclenché sur PR vers `main`, uniquement si les fichiers dbt changent :
+
+```
+paths: models/** · macros/** · tests/** · seeds/** · dbt_project.yml · packages.yml
+```
+
+**Jobs :**
+
+| Job | Steps | Dépendance |
+|---|---|---|
+| `linting` | checkout · dbt deps · dbt parse | — |
+| `slim_ci` | checkout · download manifest MinIO · dbt deps · dbt build --select state:modified+ | après `linting` |
+
+Le manifest de référence est téléchargé depuis MinIO (`dbt-artifacts/manifest.json`) pour permettre la comparaison `state:modified+` avec l'état prod.
+
+### `cd.yml` — Merge dans main
+
+Déclenché sur push dans `main`, mêmes path filters que CI :
+
+**Jobs :**
+
+| Step | Détail |
+|---|---|
+| checkout | — |
+| download manifest MinIO | référence prod pour `--defer` |
+| dbt deps | — |
+| dbt build slim | `--select state:modified+ --defer --state ./artifacts-prod` |
+| **upload manifest MinIO** | seulement si build + tests OK |
+
+> ⚠️ Le manifest n'est uploadé sur MinIO **que si le build et les tests passent**. Cela garantit que la référence prod reste toujours dans un état cohérent.
+
+### Artefacts et référence d'état
+
+```
+CD run réussi
+  └── target-prod/manifest.json
+        └── mc cp → MinIO/dbt-artifacts/manifest.json  ← source de vérité
+
+CI / CD slim suivant
+  └── mc cp MinIO/dbt-artifacts/manifest.json → /
+        └── dbt build --state artifacts-prod/ --select state:modified+
+```
+
+Le `manifest.json` encode les checksums SHA-256 de chaque fichier SQL — dbt compare ces checksums pour identifier les modèles modifiés sans accéder aux données.
+
+### Path filtering
+
+| Fichier modifié | CI déclenché | CD déclenché |
+|---|---|---|
+| `models/**` | ✅ | ✅ |
+| `macros/**` | ✅ | ✅ |
+| `dbt_project.yml` | ✅ | ✅ |
+| `README.md` | ❌ | ❌ |
+| `docs/**` | ❌ | ❌ |
+| `.github/workflows/ci.yml` | ✅ | ❌ |
+| `.github/workflows/cd.yml` | ❌ | ✅ |
+
+---
+
 ## Structure du dépôt
 
 ```
 .
-
-├── dbt_project/
-│   ├── dbt_project.yml
-│   ├── profiles.yml
-│   └── models/
-│       └── example/
-│           ├── my_first_dbt_model.sql           # materialized=table
-│           └── my_second_dbt_model.sql         # materialized=view ✅
+.github/workflows/
+│    ├── cd.yml     # slim CI — PR
+│    └── ci.yml     # slim CD — merge main
+│
+├──dbt-project/
+│    └──my_project/
+│       ├── dbt_project.yml
+│       ├── profiles.yml
+│       └── models/
+│           └── example/
+│               ├── my_first_dbt_model.sql           # materialized=table
+│               └── my_second_dbt_model.sql         # materialized=view ✅
 |
 ├──spark-iceberg-infra/
 │    ├── docker-compose.yml
@@ -332,7 +438,7 @@ pour les déploiements on-premise.
 ## Roadmap
 
 - [x] v1.0 — Infrastructure Spark + Gravitino IRC + MinIO + PostgreSQL + démo views
-- [ ] v2.0 — Projet dbt complet (staging / intermediate / marts)
-
+- [x] v2.0 — CI/CD
+- [ ] v3.0 — Projet dbt complet (staging / intermediate / marts)
 ---
 
