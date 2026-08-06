@@ -17,10 +17,10 @@ on:
 
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:  
-     
+
 env:
-  DBT_PROFILES_DIR: ${{ github.workspace }}/dbt-project/my_project
-  DBT_PROJECT_DIR: ${{ github.workspace }}/dbt-project/my_project
+  MINIO_ACCESS_KEY: ${{ secrets.MINIO_ACCESS_KEY }}
+  MINIO_SECRET_KEY: ${{ secrets.MINIO_SECRET_KEY }}     
 
 
 jobs:
@@ -37,28 +37,56 @@ jobs:
       - name: checkout
         uses: actions/checkout@v4
 
-      - name: activation de venv python
-        run: echo "$HOME/Ketrika Data/virt/bin" >> $GITHUB_PATH
-      
+      - name: create dbt container
+        run: |
+          docker rm -f dbt-cont 2>/dev/null || true
 
+          docker run -d --name dbt-cont \
+                -v $(pwd)/:/workspace \
+                dbt-pyspark-user:3.5.3 tail -f /dev/null
+            
+      
       - name: dbt deps
-        run: dbt deps
-        
+        run: docker exec dbt-cont dbt deps
+
       - name: download prod artifacts manifest.json from minio
         run: |
-          $HOME/aistor-binaries/mc cp my_minio/dbt-bucket/dbt-artifacts/manifest.json \
-          ./artifacts-prod/manifest.json 
-        
+          docker run --rm \
+                 --entrypoint=/bin/sh \
+                -w /workspace \
+                -v $(pwd):/workspace \
+                minio/mc -c " 
+                  mc alias set my_minio http://192.168.70.2:9000 '$MINIO_ACCESS_KEY' '$MINIO_SECRET_KEY'  &&
+
+                  mc cp my_minio/dbt-bucket/dbt-artifacts/manifest.json \
+                      ./artifacts-prod/manifest.json  
+                "
+
+
       - name: dbt build
         run: |
-          dbt build \
-            --target prod \
+          docker exec dbt-cont dbt build \
+            --target prod_cont \
             --target-path ./target-prod \
-           --select state:modified+ \
-           --defer \
-           --state ./artifacts-prod
+            --select state:modified+ \
+            --defer \
+            --state ./artifacts-prod
 
       - name: upload prod artifacts manifest.json to minio
         run: |
-          $HOME/aistor-binaries/mc cp ./target-prod/manifest.json \
-          my_minio/dbt-bucket/dbt-artifacts/manifest.json
+          docker run --rm \
+                --entrypoint=/bin/sh \
+                -w /workspace \
+                -v $(pwd):/workspace \
+                minio/mc -c " 
+                    mc alias set my_minio http://192.168.70.2:9000 '$MINIO_ACCESS_KEY' '$MINIO_SECRET_KEY'  &&
+
+                    mc cp ./target-prod/manifest.json \
+                                  my_minio/dbt-bucket/dbt-artifacts/manifest.json
+                                    
+                "
+
+      - name: cleanup
+        if: always()
+        run: |
+         docker rm -f dbt-cont || true
