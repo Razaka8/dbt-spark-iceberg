@@ -66,7 +66,7 @@ jobs:
       - name: dbt build
         run: |
           docker exec dbt-cont dbt build \
-            --target prod_cont \
+            --target prod \
             --target-path ./target-prod \
             --select state:modified+ \
             --defer \

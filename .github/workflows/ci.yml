@@ -96,7 +96,7 @@ jobs:
 
       - name: dbt build
         run: |
-          docker exec  dbt-cont dbt build --target ci_cont \
+          docker exec  dbt-cont dbt build --target ci \
               --select state:modified+ \
               --defer \
               --state ./artifacts-prod
